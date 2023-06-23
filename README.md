@@ -8,7 +8,7 @@ This project is a Python implementation of the IETF CBOR Encoded Message Syntax 
 ## Installation
 
 ```bash
-$ pip install pycose
+$ pip install git+https://github.com/devisefutures/pycose.git@hsm
 ```
 
 ## What is COSE ?
