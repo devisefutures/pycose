@@ -44,11 +44,11 @@ setup(
         ]
     },
     install_requires=[
-        "cryptography"
-        "cbor2"
-        "ecdsa"
-        "attrs"
-        "certvalidator"
+        "cryptography",
+        "cbor2",
+        "ecdsa",
+        "attrs",
+        "certvalidator",
         "python-pkcs11"
     ],
 )
