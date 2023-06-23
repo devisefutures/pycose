@@ -3,6 +3,7 @@ cbor2
 ecdsa
 attrs
 certvalidator
+python-pkcs11
 
 # testing
 pytest>=6.0.1

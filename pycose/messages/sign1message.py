@@ -63,10 +63,12 @@ class Sign1Message(SignCommon):
 
         return cbor2.dumps(sig_structure)
 
-    def encode(self, tag: bool = True, sign: bool = True, detached_payload: Optional[bytes] = None, *args, **kwargs) -> CBOR:
+    def encode(self,key_label :str = None, user_pin :str = None, lib_path :str = None, slot_id :int =None, tag: bool = True, sign: bool = True, hsm: bool = False, detached_payload: Optional[bytes] = None, *args, **kwargs) -> CBOR:
         """ Encodes the message into a CBOR array with or without a CBOR tag. """
-
-        if sign:
+        print("\nHSM: ", hsm)
+        if hsm:
+            message = [self.phdr_encoded, self.uhdr_encoded, self.payload, self.compute_signature_hsm(detached_payload=detached_payload,key_label=key_label, user_pin=user_pin, lib_path=lib_path,slot_id=slot_id)]
+        elif sign:
             message = [self.phdr_encoded, self.uhdr_encoded, self.payload, self.compute_signature(detached_payload)]
         elif self.signature:
             message = [self.phdr_encoded, self.uhdr_encoded, self.payload, self.signature]

@@ -23,6 +23,15 @@ from ecdsa.keys import SigningKey, VerifyingKey, BadSignatureError
 from pycose.exceptions import CoseException
 from pycose.headers import Algorithm
 from pycose.utils import _CoseAttribute
+from PyKCS11 import *
+from PyKCS11.LowLevel import *
+import binascii
+import pkcs11
+from pkcs11 import Attribute 
+from pkcs11.constants import ObjectClass
+from pkcs11.mechanisms import Mechanism
+
+
 
 if TYPE_CHECKING:
     from pycose.keys.symmetric import SK
@@ -102,6 +111,44 @@ class _Rsa(CoseAlgorithm, ABC):
         sk = private_nums.private_key(backend=default_backend())
 
         return sk.sign(data, pad, hash_cls())
+    
+    @classmethod
+    def hsm_sign(cls, data: bytes,key_label :str, user_pin :str, lib_path :str, slot_id :int) -> bytes:
+        lib = pkcs11.lib(lib_path)
+        print("\n Token: ",lib.get_slots()[slot_id].get_token(),"\n")
+        token = lib.get_slots()[slot_id].get_token()
+        
+        # Open a session on our token
+        with token.open(user_pin=user_pin) as session:
+            
+            # Find the key in the HSM
+            #key_label = "brainppol2".encode("utf-8")
+            private_key = session.get_key(object_class=ObjectClass.PRIVATE_KEY,id=key_label.encode("utf-8"))
+            print("\n Session: ", session, "\n")
+            print("\n Private Key: ", private_key, "\n")
+
+            # Sign data using the private key
+
+            hash_cls = cls.get_hash_func()
+
+            if hash_cls is SHA256:
+                mechanism = Mechanism.SHA256_RSA_PKCS
+            elif hash_cls is SHA384:
+                mechanism = Mechanism.SHA384_RSA_PKCS
+            elif hash_cls is SHA512:
+                mechanism = Mechanism.SHA512_RSA_PKCS
+            elif hash_cls is SHA1:
+                mechanism = Mechanism.SHA1_RSA_PKCS
+            else:
+                mechanism = Mechanism.SHA256_RSA_PKCS
+
+            print("\nmechanism: ", mechanism)
+
+            signature = private_key.sign(data,mechanism=mechanism)
+
+        
+        print("\n Signature RSA: ", signature.hex(), "\n")
+        return signature
 
     @classmethod
     def verify(cls, key: 'RSA', data: bytes, signature: bytes) -> bool:
@@ -184,6 +231,64 @@ class _Ecdsa(CoseAlgorithm, ABC):
         sk = SigningKey.from_secret_exponent(int(hexlify(key.d), 16), curve=cls.get_curve())
 
         return sk.sign_deterministic(data, hashfunc=cls.get_hash_func())
+    
+    @classmethod
+    def hsm_sign(cls, data: bytes,key_label :str, user_pin :str, lib_path :str, slot_id :int) -> bytes:
+        #pkcs11 = PyKCS11Lib()
+        #pkcs11.load(pkcs11dll_filename="/etc/utimaco/libcs2_pkcs11.so")
+
+        lib = pkcs11.lib(lib_path)
+        print("\n Token: ",lib.get_slots()[slot_id].get_token(),"\n")
+        token = lib.get_slots()[slot_id].get_token()
+
+        #token = lib.get_token(token_serial="CS000000_0003".encode("utf-8"))
+
+        # get 3rd slot
+        #slot = pkcs11.getSlotList(tokenPresent=True)[3]
+
+        #session = pkcs11.openSession(slot)
+        #session.login("1234")
+        
+        #key_id = (0x627261696E706FC32)
+        #key_search_template = [
+        #    (CKA_CLASS, CKO_PRIVATE_KEY),
+        #    (CKA_ID, hex("brainppol2"))
+        #]
+
+        #privKey = session.findObjects(key_search_template)[0]
+
+        #mechanism = Mechanism(CKM_ECDSA)
+        #signature = session.sign(privKey, data, mechanism)
+        #print("\nsignature: {}".format(binascii.hexlify(bytearray(signature))))
+        
+        # Open a session on our token
+        with token.open(user_pin=user_pin) as session:
+            
+            # Find the key in the HSM
+            #key_label = "brainppol2".encode("utf-8")
+            private_key = session.get_key(object_class=ObjectClass.PRIVATE_KEY,id=key_label.encode("utf-8"))
+            print("\n Session: ", session, "\n")
+            print("\n Private Key: ", private_key, "\n")
+
+            # Sign data using the private key
+            hash_func = cls.get_hash_func()
+            
+            if hash_func is sha256:
+                mechanism = Mechanism.ECDSA_SHA256
+            elif hash_func is sha384:
+                mechanism = Mechanism.ECDSA_SHA384
+            elif hash_func is sha512:
+                mechanism = Mechanism.ECDSA_SHA512
+            else:
+                mechanism = Mechanism.ECDSA_SHA256
+
+            print("\nMechanism: ", mechanism)
+
+            signature = private_key.sign(data,mechanism=mechanism)
+
+        
+        print("\n Signature ECDSA: ", signature.hex(), "\n")
+        return signature
 
     @classmethod
     def verify(cls, key: 'EC2', data: bytes, signature: bytes) -> bool:
@@ -1025,6 +1130,30 @@ class EdDSA(CoseAlgorithm):
             raise CoseException(f"Illegal curve for OKP singing: {key.crv}")
 
         return sk.sign(data)
+    
+    @classmethod
+    def hsm_sign(cls, data: bytes,key_label :str, user_pin :str, lib_path :str, slot_id :int) -> bytes:
+
+        lib = pkcs11.lib(lib_path)
+        print("\n Token: ",lib.get_slots()[slot_id].get_token(),"\n")
+        token = lib.get_slots()[slot_id].get_token()
+        
+        # Open a session on our token
+        with token.open(user_pin=user_pin) as session:
+            
+            # Find the key in the HSM
+            #key_label = "brainppol2".encode("utf-8")
+            private_key = session.get_key(object_class=ObjectClass.PRIVATE_KEY,id=key_label.encode("utf-8"))
+            print("\n Session: ", session, "\n")
+            print("\n Private Key: ", private_key, "\n")
+
+            # Sign data using the private key
+
+            signature = private_key.sign(data,mechanism=Mechanism.EDDSA)
+
+        
+        print("\n Signature EDDSA: ", signature.hex(), "\n")
+        return signature
 
     @classmethod
     def verify(cls, key: 'OKP', data: bytes, signature: bytes) -> bool:

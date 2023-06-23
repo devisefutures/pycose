@@ -60,3 +60,16 @@ class SignCommon(CoseMessage, metaclass=abc.ABCMeta):
         self._key_verification(alg, SignOp)
 
         return alg.sign(key=self.key, data=self._create_sig_structure(detached_payload))
+    
+    def compute_signature_hsm(self, key_label :str, user_pin :str, lib_path :str, slot_id :int, detached_payload: Optional[bytes] = None, *args, **kwargs) -> bytes:
+        """
+        Computes the signature over a COSE message.
+
+        :returns: the signature
+        """
+
+        alg = self.get_attr(headers.Algorithm)
+
+        #self._key_verification(alg, SignOp)
+
+        return alg.hsm_sign(data=self._create_sig_structure(detached_payload),key_label=key_label, user_pin=user_pin, lib_path=lib_path,slot_id=slot_id)

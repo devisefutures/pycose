@@ -3,3 +3,4 @@ cbor2
 ecdsa
 attrs
 certvalidator
+python-pkcs11
