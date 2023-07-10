@@ -23,8 +23,8 @@ from ecdsa.keys import SigningKey, VerifyingKey, BadSignatureError
 from pycose.exceptions import CoseException
 from pycose.headers import Algorithm
 from pycose.utils import _CoseAttribute
-from PyKCS11 import *
-from PyKCS11.LowLevel import *
+#from PyKCS11 import *
+#from PyKCS11.LowLevel import *
 import binascii
 import pkcs11
 from pkcs11 import Attribute 
