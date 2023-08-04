@@ -1,18 +1,34 @@
 from abc import ABC, abstractmethod
 from binascii import hexlify, unhexlify
 from hashlib import sha512, sha384, sha256
+import threading
 from typing import TYPE_CHECKING, Optional, TypeVar
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.ec import ECDH
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-from cryptography.hazmat.primitives.asymmetric.ed448 import Ed448PrivateKey, Ed448PublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
+from cryptography.hazmat.primitives.asymmetric.ed448 import (
+    Ed448PrivateKey,
+    Ed448PublicKey,
+)
 from cryptography.hazmat.primitives.ciphers import modes, Cipher
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, AESCCM
 from cryptography.hazmat.primitives.ciphers.algorithms import AES
-from cryptography.hazmat.primitives.hashes import Hash, HashAlgorithm, SHA1, SHA256, SHA512, SHA384, SHAKE128, SHAKE256
+from cryptography.hazmat.primitives.hashes import (
+    Hash,
+    HashAlgorithm,
+    SHA1,
+    SHA256,
+    SHA512,
+    SHA384,
+    SHAKE128,
+    SHAKE256,
+)
 from cryptography.hazmat.primitives.hmac import HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.keywrap import aes_key_wrap, aes_key_unwrap
@@ -28,7 +44,6 @@ from pkcs11.constants import ObjectClass
 from pkcs11.mechanisms import Mechanism
 
 
-
 if TYPE_CHECKING:
     from pycose.keys.symmetric import SK
     from pycose.keys.ec2 import EC2
@@ -39,7 +54,7 @@ if TYPE_CHECKING:
 
 
 class CoseAlgorithm(_CoseAttribute, ABC):
-    """ Base class for all COSE algorithms. """
+    """Base class for all COSE algorithms."""
 
     _registered_algorithms = {}
 
@@ -65,7 +80,7 @@ class _HashAlg(CoseAlgorithm, ABC):
         digest = h.finalize()
 
         if cls.trunc_size:
-            digest = digest[:cls.trunc_size]
+            digest = digest[: cls.trunc_size]
 
         return digest
 
@@ -78,7 +93,7 @@ class _EncAlg(CoseAlgorithm, ABC):
 
 
 class _Rsa(CoseAlgorithm, ABC):
-    """ RSA signing and (key-wrap) encryption. """
+    """RSA signing and (key-wrap) encryption."""
 
     @classmethod
     @abstractmethod
@@ -91,35 +106,42 @@ class _Rsa(CoseAlgorithm, ABC):
         raise NotImplementedError()
 
     @classmethod
-    def sign(cls, key: 'RSA', data: bytes) -> bytes:
+    def sign(cls, key: "RSA", data: bytes) -> bytes:
         hash_cls = cls.get_hash_func()
         pad = cls.get_pad_func(hash_cls)
 
-        public_nums = rsa.RSAPublicNumbers(e=int.from_bytes(key.e, 'big'), n=int.from_bytes(key.n, 'big'))
-        private_nums = rsa.RSAPrivateNumbers(p=int.from_bytes(key.p, 'big'),
-                                             q=int.from_bytes(key.q, 'big'),
-                                             d=int.from_bytes(key.d, 'big'),
-                                             dmp1=int.from_bytes(key.dp, 'big'),
-                                             dmq1=int.from_bytes(key.dq, 'big'),
-                                             iqmp=int.from_bytes(key.qinv, 'big'),
-                                             public_numbers=public_nums)
+        public_nums = rsa.RSAPublicNumbers(
+            e=int.from_bytes(key.e, "big"), n=int.from_bytes(key.n, "big")
+        )
+        private_nums = rsa.RSAPrivateNumbers(
+            p=int.from_bytes(key.p, "big"),
+            q=int.from_bytes(key.q, "big"),
+            d=int.from_bytes(key.d, "big"),
+            dmp1=int.from_bytes(key.dp, "big"),
+            dmq1=int.from_bytes(key.dq, "big"),
+            iqmp=int.from_bytes(key.qinv, "big"),
+            public_numbers=public_nums,
+        )
 
         sk = private_nums.private_key(backend=default_backend())
 
         return sk.sign(data, pad, hash_cls())
-    
+
     @classmethod
-    def hsm_sign(cls, data: bytes,key_label :str, user_pin :str, lib_path :str, slot_id :int) -> bytes:
+    def hsm_sign(
+        cls, data: bytes, key_label: str, user_pin: str, lib_path: str, slot_id: int
+    ) -> bytes:
         lib = pkcs11.lib(lib_path)
-        print("\n Token: ",lib.get_slots()[slot_id].get_token(),"\n")
+        print("\n Token: ", lib.get_slots()[slot_id].get_token(), "\n")
         token = lib.get_slots()[slot_id].get_token()
-        
+
         # Open a session on our token
         with token.open(user_pin=user_pin) as session:
-            
             # Find the key in the HSM
-            #key_label = "brainppol2".encode("utf-8")
-            private_key = session.get_key(object_class=ObjectClass.PRIVATE_KEY,id=key_label.encode("utf-8"))
+            # key_label = "brainppol2".encode("utf-8")
+            private_key = session.get_key(
+                object_class=ObjectClass.PRIVATE_KEY, id=key_label.encode("utf-8")
+            )
             print("\n Session: ", session, "\n")
             print("\n Private Key: ", private_key, "\n")
 
@@ -140,18 +162,19 @@ class _Rsa(CoseAlgorithm, ABC):
 
             print("\nmechanism: ", mechanism)
 
-            signature = private_key.sign(data,mechanism=mechanism)
+            signature = private_key.sign(data, mechanism=mechanism)
 
-        
         print("\n Signature RSA: ", signature.hex(), "\n")
         return signature
 
     @classmethod
-    def verify(cls, key: 'RSA', data: bytes, signature: bytes) -> bool:
+    def verify(cls, key: "RSA", data: bytes, signature: bytes) -> bool:
         hash_cls = cls.get_hash_func()
         pad = cls.get_pad_func(hash_cls)
 
-        public_nums = rsa.RSAPublicNumbers(e=int.from_bytes(key.e, 'big'), n=int.from_bytes(key.n, 'big'))
+        public_nums = rsa.RSAPublicNumbers(
+            e=int.from_bytes(key.e, "big"), n=int.from_bytes(key.n, "big")
+        )
         pk = public_nums.public_key(backend=default_backend())
 
         try:
@@ -162,41 +185,51 @@ class _Rsa(CoseAlgorithm, ABC):
 
 
 class _RsaPss(_Rsa, ABC):
-    """ RSA with PSS padding. """
+    """RSA with PSS padding."""
 
     @classmethod
     def get_pad_func(cls, hash_cls):
-        return padding.PSS(mgf=padding.MGF1(hash_cls()), salt_length=hash_cls.digest_size)
+        return padding.PSS(
+            mgf=padding.MGF1(hash_cls()), salt_length=hash_cls.digest_size
+        )
 
 
 class _RsaOaep(_Rsa, ABC):
-    """ RSA with OAEP padding. """
+    """RSA with OAEP padding."""
 
     @classmethod
     def get_pad_func(cls, hash_cls):
-        return padding.OAEP(mgf=padding.MGF1(hash_cls()), algorithm=hash_cls(), label=None)
+        return padding.OAEP(
+            mgf=padding.MGF1(hash_cls()), algorithm=hash_cls(), label=None
+        )
 
     @classmethod
-    def key_wrap(cls, key: 'RSA', data: bytes) -> bytes:
+    def key_wrap(cls, key: "RSA", data: bytes) -> bytes:
         pad = cls.get_pad_func(cls.get_hash_func())
 
-        public_nums = rsa.RSAPublicNumbers(e=int.from_bytes(key.e, 'big'), n=int.from_bytes(key.n, 'big'))
+        public_nums = rsa.RSAPublicNumbers(
+            e=int.from_bytes(key.e, "big"), n=int.from_bytes(key.n, "big")
+        )
         pk = public_nums.public_key(backend=default_backend())
 
         return pk.encrypt(data, pad)
 
     @classmethod
-    def key_unwrap(cls, key: 'RSA', data: bytes) -> bytes:
+    def key_unwrap(cls, key: "RSA", data: bytes) -> bytes:
         pad = cls.get_pad_func(cls.get_hash_func())
 
-        public_nums = rsa.RSAPublicNumbers(e=int.from_bytes(key.e, 'big'), n=int.from_bytes(key.n, 'big'))
-        private_nums = rsa.RSAPrivateNumbers(p=int.from_bytes(key.p, 'big'),
-                                             q=int.from_bytes(key.q, 'big'),
-                                             d=int.from_bytes(key.d, 'big'),
-                                             dmp1=int.from_bytes(key.dp, 'big'),
-                                             dmq1=int.from_bytes(key.dq, 'big'),
-                                             iqmp=int.from_bytes(key.qinv, 'big'),
-                                             public_numbers=public_nums)
+        public_nums = rsa.RSAPublicNumbers(
+            e=int.from_bytes(key.e, "big"), n=int.from_bytes(key.n, "big")
+        )
+        private_nums = rsa.RSAPrivateNumbers(
+            p=int.from_bytes(key.p, "big"),
+            q=int.from_bytes(key.q, "big"),
+            d=int.from_bytes(key.d, "big"),
+            dmp1=int.from_bytes(key.dp, "big"),
+            dmq1=int.from_bytes(key.dq, "big"),
+            iqmp=int.from_bytes(key.qinv, "big"),
+            public_numbers=public_nums,
+        )
 
         sk = private_nums.private_key(backend=default_backend())
 
@@ -204,11 +237,47 @@ class _RsaOaep(_Rsa, ABC):
 
 
 class _RsaPkcs1(_Rsa, ABC):
-    """ RSA with PKCS#1 padding. """
+    """RSA with PKCS#1 padding."""
 
     @classmethod
     def get_pad_func(cls, hash_cls):
         return padding.PKCS1v15()
+
+
+LOCK = threading.Lock()
+
+
+class Session(object):
+    """Reenterant session wrapper."""
+
+    session = None
+    refcount = 0
+
+    @classmethod
+    def acquire(cls, user_pin: str, lib_path: str, slot_id: int):
+        with LOCK:
+            if cls.refcount == 0:
+                LIB = pkcs11.lib(lib_path)
+                token = LIB.get_slots()[slot_id].get_token()
+                cls.session = token.open(user_pin=user_pin)
+
+            cls.refcount += 1
+            return cls.session
+
+    @classmethod
+    def release(cls):
+        with LOCK:
+            cls.refcount -= 1
+
+            if cls.refcount == 0:
+                cls.session.close()
+                cls.session = None
+
+    def __enter__(self):
+        return self.acquire()
+
+    def __exit__(self, type_, value, traceback):
+        self.release()
 
 
 class _Ecdsa(CoseAlgorithm, ABC):
@@ -223,77 +292,58 @@ class _Ecdsa(CoseAlgorithm, ABC):
         raise NotImplementedError()
 
     @classmethod
-    def sign(cls, key: 'EC2', data: bytes) -> bytes:
-        sk = SigningKey.from_secret_exponent(int(hexlify(key.d), 16), curve=cls.get_curve())
+    def sign(cls, key: "EC2", data: bytes) -> bytes:
+        sk = SigningKey.from_secret_exponent(
+            int(hexlify(key.d), 16), curve=cls.get_curve()
+        )
 
         return sk.sign_deterministic(data, hashfunc=cls.get_hash_func())
-    
+
     @classmethod
-    def hsm_sign(cls, data: bytes,key_label :str, user_pin :str, lib_path :str, slot_id :int) -> bytes:
-        #pkcs11 = PyKCS11Lib()
-        #pkcs11.load(pkcs11dll_filename="/etc/utimaco/libcs2_pkcs11.so")
-
-        lib = pkcs11.lib(lib_path)
-        print("\n Token: ",lib.get_slots()[slot_id].get_token(),"\n")
-        token = lib.get_slots()[slot_id].get_token()
-
-        #token = lib.get_token(token_serial="CS000000_0003".encode("utf-8"))
-
-        # get 3rd slot
-        #slot = pkcs11.getSlotList(tokenPresent=True)[3]
-
-        #session = pkcs11.openSession(slot)
-        #session.login("1234")
-        
-        #key_id = (0x627261696E706FC32)
-        #key_search_template = [
-        #    (CKA_CLASS, CKO_PRIVATE_KEY),
-        #    (CKA_ID, hex("brainppol2"))
-        #]
-
-        #privKey = session.findObjects(key_search_template)[0]
-
-        #mechanism = Mechanism(CKM_ECDSA)
-        #signature = session.sign(privKey, data, mechanism)
-        #print("\nsignature: {}".format(binascii.hexlify(bytearray(signature))))
-        
+    def hsm_sign(
+        cls, data: bytes, key_label: str, user_pin: str, lib_path: str, slot_id: int
+    ) -> bytes:
         # Open a session on our token
-        with token.open(user_pin=user_pin) as session:
-            
-            # Find the key in the HSM
-            #key_label = "brainppol2".encode("utf-8")
-            private_key = session.get_key(object_class=ObjectClass.PRIVATE_KEY,id=key_label.encode("utf-8"))
-            print("\n Session: ", session, "\n")
-            print("\n Private Key: ", private_key, "\n")
+        session = Session.acquire(lib_path=lib_path, user_pin=user_pin, slot_id=slot_id)
 
-            # Sign data using the private key
-            hash_func = cls.get_hash_func()
-            
-            if hash_func is sha256:
-                mechanism = Mechanism.ECDSA_SHA256
-            elif hash_func is sha384:
-                mechanism = Mechanism.ECDSA_SHA384
-            elif hash_func is sha512:
-                mechanism = Mechanism.ECDSA_SHA512
-            else:
-                mechanism = Mechanism.ECDSA_SHA256
+        # Find the key in the HSM
+        private_key = session.get_key(
+            object_class=ObjectClass.PRIVATE_KEY, id=key_label.encode("utf-8")
+        )
 
-            print("\nMechanism: ", mechanism)
+        # Sign data using the private key
+        hash_func = cls.get_hash_func()
 
-            signature = private_key.sign(data,mechanism=mechanism)
+        if hash_func is sha256:
+            mechanism = Mechanism.ECDSA_SHA256
+        elif hash_func is sha384:
+            mechanism = Mechanism.ECDSA_SHA384
+        elif hash_func is sha512:
+            mechanism = Mechanism.ECDSA_SHA512
+        else:
+            mechanism = Mechanism.ECDSA_SHA256
 
-        
-        print("\n Signature ECDSA: ", signature.hex(), "\n")
+        signature = private_key.sign(data, mechanism=mechanism)
+        Session.release()
+
         return signature
 
     @classmethod
-    def verify(cls, key: 'EC2', data: bytes, signature: bytes) -> bool:
-        p = Point(curve=cls.get_curve().curve, x=int(hexlify(key.x), 16), y=int(hexlify(key.y), 16))
+    def verify(cls, key: "EC2", data: bytes, signature: bytes) -> bool:
+        p = Point(
+            curve=cls.get_curve().curve,
+            x=int(hexlify(key.x), 16),
+            y=int(hexlify(key.y), 16),
+        )
 
-        vk = VerifyingKey.from_public_point(p, cls.get_curve(), cls.get_hash_func(), validate_point=True)
+        vk = VerifyingKey.from_public_point(
+            p, cls.get_curve(), cls.get_hash_func(), validate_point=True
+        )
 
         try:
-            return vk.verify(signature=signature, data=data, hashfunc=cls.get_hash_func())
+            return vk.verify(
+                signature=signature, data=data, hashfunc=cls.get_hash_func()
+            )
         except BadSignatureError:
             return False
 
@@ -305,17 +355,19 @@ class _AesMac(CoseAlgorithm, ABC):
         raise NotImplementedError()
 
     @classmethod
-    def compute_tag(cls, key: 'SK', data: bytes):
-        encryptor = Cipher(AES(key.k),
-                           modes.CBC(unhexlify(b''.join([b'00'] * 16))),
-                           backend=default_backend()).encryptor()
+    def compute_tag(cls, key: "SK", data: bytes):
+        encryptor = Cipher(
+            AES(key.k),
+            modes.CBC(unhexlify(b"".join([b"00"] * 16))),
+            backend=default_backend(),
+        ).encryptor()
 
         while len(data) % 16 != 0:
             data += unhexlify(b"00")
 
         ciphertext = encryptor.update(data) + encryptor.finalize()
         if cls.get_digest_length() == 16:
-            digest = ciphertext[-1 * cls.get_digest_length():]
+            digest = ciphertext[-1 * cls.get_digest_length() :]
         else:
             ciphertext = ciphertext[:-8]
             digest = ciphertext[-8:]
@@ -323,7 +375,7 @@ class _AesMac(CoseAlgorithm, ABC):
         return digest
 
     @classmethod
-    def verify_tag(cls, key: 'SK', tag: bytes, data: bytes):
+    def verify_tag(cls, key: "SK", tag: bytes, data: bytes):
         computed_tag = cls.compute_tag(key, data)
 
         if tag == computed_tag:
@@ -344,16 +396,15 @@ class _HMAC(CoseAlgorithm, ABC):
         raise NotImplementedError()
 
     @classmethod
-    def compute_tag(cls, key: 'SK', data: bytes):
+    def compute_tag(cls, key: "SK", data: bytes):
         h = HMAC(key.k, cls.get_hash_func(), backend=default_backend())
         h.update(data)
         digest = h.finalize()
 
-        return digest[:cls.get_digest_length()]
+        return digest[: cls.get_digest_length()]
 
     @classmethod
-    def verify_tag(cls, key: 'SK', tag: bytes, data: bytes) -> bool:
-
+    def verify_tag(cls, key: "SK", tag: bytes, data: bytes) -> bool:
         computed_tag = cls.compute_tag(key, data)
 
         if tag == computed_tag:
@@ -363,18 +414,21 @@ class _HMAC(CoseAlgorithm, ABC):
 
 
 class _AesKw(_EncAlg, ABC):
-
     @classmethod
-    def key_wrap(cls, kek: 'SK', data: bytes):
+    def key_wrap(cls, kek: "SK", data: bytes):
         if cls.get_key_length() != len(kek.k):
             raise ValueError("Key has the wrong length")
-        return aes_key_wrap(wrapping_key=kek.k, key_to_wrap=data, backend=default_backend())
+        return aes_key_wrap(
+            wrapping_key=kek.k, key_to_wrap=data, backend=default_backend()
+        )
 
     @classmethod
-    def key_unwrap(cls, kek: 'SK', data: bytes):
+    def key_unwrap(cls, kek: "SK", data: bytes):
         if cls.get_key_length() != len(kek.k):
             raise ValueError("Key has the wrong length")
-        return aes_key_unwrap(wrapping_key=kek.k, wrapped_key=data, backend=default_backend())
+        return aes_key_unwrap(
+            wrapping_key=kek.k, wrapped_key=data, backend=default_backend()
+        )
 
 
 class _EcdhHkdf(CoseAlgorithm, ABC):
@@ -389,7 +443,7 @@ class _EcdhHkdf(CoseAlgorithm, ABC):
         raise NotImplementedError()
 
     @classmethod
-    def _ecdh(cls, curve: 'CoseCurve', private_key: 'EC2', public_key: 'EC2') -> bytes:
+    def _ecdh(cls, curve: "CoseCurve", private_key: "EC2", public_key: "EC2") -> bytes:
         d_value = int(hexlify(private_key.d), 16)
         x_value = int(hexlify(public_key.x), 16)
         y_value = int(hexlify(public_key.y), 16)
@@ -402,42 +456,50 @@ class _EcdhHkdf(CoseAlgorithm, ABC):
         return shared_key
 
     @classmethod
-    def derive_kek(cls, curve: 'CoseCurve', private_key: 'EC2', public_key: 'EC2', context: 'CoseKDFContext') -> bytes:
+    def derive_kek(
+        cls,
+        curve: "CoseCurve",
+        private_key: "EC2",
+        public_key: "EC2",
+        context: "CoseKDFContext",
+    ) -> bytes:
         shared_secret = cls._ecdh(curve, private_key, public_key)
 
-        kdf = HKDF(algorithm=cls.get_hash_func(), length=context.supp_pub_info.key_data_length, salt=None,
-                   info=context.encode(),
-                   backend=default_backend())
+        kdf = HKDF(
+            algorithm=cls.get_hash_func(),
+            length=context.supp_pub_info.key_data_length,
+            salt=None,
+            info=context.encode(),
+            backend=default_backend(),
+        )
         return kdf.derive(shared_secret)
 
 
 class _AesGcm(_EncAlg, ABC):
-
     @classmethod
-    def encrypt(cls, key: 'SK', nonce: bytes, data: bytes, aad: bytes) -> bytes:
+    def encrypt(cls, key: "SK", nonce: bytes, data: bytes, aad: bytes) -> bytes:
         cipher = AESGCM(key=key.k)
         return cipher.encrypt(nonce=nonce, data=data, associated_data=aad)
 
     @classmethod
-    def decrypt(cls, key: 'SK', nonce: bytes, ciphertext: bytes, aad: bytes) -> bytes:
+    def decrypt(cls, key: "SK", nonce: bytes, ciphertext: bytes, aad: bytes) -> bytes:
         cipher = AESGCM(key=key.k)
         return cipher.decrypt(nonce=nonce, data=ciphertext, associated_data=aad)
 
 
 class _AesCcm(_EncAlg, ABC):
-
     @classmethod
     @abstractmethod
     def get_tag_length(cls) -> int:
         raise NotImplementedError()
 
     @classmethod
-    def encrypt(cls, key: 'SK', nonce: bytes, data: bytes, aad: bytes) -> bytes:
+    def encrypt(cls, key: "SK", nonce: bytes, data: bytes, aad: bytes) -> bytes:
         cipher = AESCCM(key.k, tag_length=cls.get_tag_length())
         return cipher.encrypt(nonce, data=data, associated_data=aad)
 
     @classmethod
-    def decrypt(cls, key: 'SK', nonce: bytes, ciphertext: bytes, aad: bytes) -> bytes:
+    def decrypt(cls, key: "SK", nonce: bytes, ciphertext: bytes, aad: bytes) -> bytes:
         cipher = AESCCM(key=key.k, tag_length=cls.get_tag_length())
         return cipher.decrypt(nonce, data=ciphertext, associated_data=aad)
 
@@ -445,6 +507,7 @@ class _AesCcm(_EncAlg, ABC):
 ##################################################
 #            SUPPORTED COSE ALGORITHMS           #
 ##################################################
+
 
 @CoseAlgorithm.register_attribute()
 class RsaPkcs1Sha1(_RsaPkcs1):
@@ -494,6 +557,7 @@ class RsaPkcs1Sha384(_RsaPkcs1):
 
         fullname       RS384
     """
+
     identifier = -258
     fullname = "RS384"
 
@@ -647,12 +711,12 @@ class Es512(_Ecdsa):
 
     @classmethod
     def get_hash_func(cls):
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return sha512
 
     @classmethod
     def get_curve(cls) -> Curve:
-        """ Returns a curve object used with this algorithm """
+        """Returns a curve object used with this algorithm"""
         return NIST521p
 
 
@@ -672,12 +736,12 @@ class Es384(_Ecdsa):
 
     @classmethod
     def get_hash_func(cls):
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return sha384
 
     @classmethod
     def get_curve(cls) -> Curve:
-        """ Returns a curve object used with this algorithm """
+        """Returns a curve object used with this algorithm"""
         return NIST384p
 
 
@@ -697,17 +761,17 @@ class EcdhSsA256KW(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA256()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return A256KW
 
     @classmethod
     def get_key_length(cls) -> int:
-        """ Returns the key length of the wrapping function """
+        """Returns the key length of the wrapping function"""
         return cls.get_key_wrap_func().get_key_length()
 
 
@@ -727,17 +791,17 @@ class EcdhSsA192KW(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA256()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return A192KW
 
     @classmethod
     def get_key_length(cls) -> int:
-        """ Returns the key length of the wrapping function """
+        """Returns the key length of the wrapping function"""
         return cls.get_key_wrap_func().get_key_length()
 
 
@@ -757,17 +821,17 @@ class EcdhSsA128KW(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA256()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return A128KW
 
     @classmethod
     def get_key_length(cls) -> int:
-        """ Returns the key length of the wrapping function """
+        """Returns the key length of the wrapping function"""
         return cls.get_key_wrap_func().get_key_length()
 
 
@@ -787,17 +851,17 @@ class EcdhEsA256KW(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA256()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return A256KW
 
     @classmethod
     def get_key_length(cls) -> int:
-        """ Returns the key length of the wrapping function """
+        """Returns the key length of the wrapping function"""
         return cls.get_key_wrap_func().get_key_length()
 
 
@@ -817,17 +881,17 @@ class EcdhEsA192KW(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA256()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return A192KW
 
     @classmethod
     def get_key_length(cls) -> int:
-        """ Returns the key length of the wrapping function """
+        """Returns the key length of the wrapping function"""
         return cls.get_key_wrap_func().get_key_length()
 
 
@@ -847,17 +911,17 @@ class EcdhEsA128KW(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA256()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return A128KW()
 
     @classmethod
     def get_key_length(cls) -> int:
-        """ Returns the key length of the wrapping function """
+        """Returns the key length of the wrapping function"""
         return cls.get_key_wrap_func().get_key_length()
 
 
@@ -877,12 +941,12 @@ class EcdhSsHKDF512(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA512()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return Direct()
 
 
@@ -902,12 +966,12 @@ class EcdhSsHKDF256(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA256()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return Direct()
 
 
@@ -927,12 +991,12 @@ class EcdhEsHKDF512(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA512()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return Direct()
 
 
@@ -952,12 +1016,12 @@ class EcdhEsHKDF256(_EcdhHkdf):
 
     @classmethod
     def get_hash_func(cls) -> HashAlgorithm:
-        """ Returns a hash function used with this algorithm """
+        """Returns a hash function used with this algorithm"""
         return SHA256()
 
     @classmethod
     def get_key_wrap_func(cls):
-        """ Returns a key wrap function used with this algorithm """
+        """Returns a key wrap function used with this algorithm"""
         return Direct()
 
 
@@ -1054,7 +1118,7 @@ class DirectHKDFAES256(CoseAlgorithm):
         fullname       DIRECT_HKDF_AES_256
     """
 
-    identifier = - 13
+    identifier = -13
     fullname = "DIRECT_HKDF_AES_256"
 
 
@@ -1068,7 +1132,8 @@ class DirectHKDFAES128(CoseAlgorithm):
 
         fullname       DIRECT_HKDF_AES_128
     """
-    identifier = - 12
+
+    identifier = -12
     fullname = "DIRECT_HKDF_AES_128"
 
 
@@ -1083,7 +1148,7 @@ class DirecHKDFSHA512(CoseAlgorithm):
         fullname       DIRECT_HKDF_SHA_512
     """
 
-    identifier = - 11
+    identifier = -11
     fullname = "DIRECT_HKDF_SHA_512"
 
 
@@ -1098,7 +1163,7 @@ class DirectHKDFSHA256(CoseAlgorithm):
         fullname       DIRECT_HKDF_SHA_256
     """
 
-    identifier = - 10
+    identifier = -10
     fullname = "DIRECT_HKDF_SHA_256"
 
 
@@ -1117,45 +1182,46 @@ class EdDSA(CoseAlgorithm):
     fullname = "EDDSA"
 
     @classmethod
-    def sign(cls, key: 'OKP', data: bytes) -> bytes:
-        if key.crv.fullname == 'ED25519':
+    def sign(cls, key: "OKP", data: bytes) -> bytes:
+        if key.crv.fullname == "ED25519":
             sk = Ed25519PrivateKey.from_private_bytes(key.d)
-        elif key.crv.fullname == 'ED448':
+        elif key.crv.fullname == "ED448":
             sk = Ed448PrivateKey.from_private_bytes(key.d)
         else:
             raise CoseException(f"Illegal curve for OKP singing: {key.crv}")
 
         return sk.sign(data)
-    
-    @classmethod
-    def hsm_sign(cls, data: bytes,key_label :str, user_pin :str, lib_path :str, slot_id :int) -> bytes:
 
+    @classmethod
+    def hsm_sign(
+        cls, data: bytes, key_label: str, user_pin: str, lib_path: str, slot_id: int
+    ) -> bytes:
         lib = pkcs11.lib(lib_path)
-        print("\n Token: ",lib.get_slots()[slot_id].get_token(),"\n")
+        print("\n Token: ", lib.get_slots()[slot_id].get_token(), "\n")
         token = lib.get_slots()[slot_id].get_token()
-        
+
         # Open a session on our token
         with token.open(user_pin=user_pin) as session:
-            
             # Find the key in the HSM
-            #key_label = "brainppol2".encode("utf-8")
-            private_key = session.get_key(object_class=ObjectClass.PRIVATE_KEY,id=key_label.encode("utf-8"))
+            # key_label = "brainppol2".encode("utf-8")
+            private_key = session.get_key(
+                object_class=ObjectClass.PRIVATE_KEY, id=key_label.encode("utf-8")
+            )
             print("\n Session: ", session, "\n")
             print("\n Private Key: ", private_key, "\n")
 
             # Sign data using the private key
 
-            signature = private_key.sign(data,mechanism=Mechanism.EDDSA)
+            signature = private_key.sign(data, mechanism=Mechanism.EDDSA)
 
-        
         print("\n Signature EDDSA: ", signature.hex(), "\n")
         return signature
 
     @classmethod
-    def verify(cls, key: 'OKP', data: bytes, signature: bytes) -> bool:
-        if key.crv.fullname == 'ED25519':
+    def verify(cls, key: "OKP", data: bytes, signature: bytes) -> bool:
+        if key.crv.fullname == "ED25519":
             vk = Ed25519PublicKey.from_public_bytes(key.x)
-        elif key.crv.fullname == 'ED448':
+        elif key.crv.fullname == "ED448":
             vk = Ed448PublicKey.from_public_bytes(key.x)
         else:
             raise CoseException(f"Illegal curve for OKP singing: {key.crv}")
@@ -1274,7 +1340,7 @@ class A128GCM(_AesGcm):
     """
 
     identifier = 1
-    fullname = 'A128GCM'
+    fullname = "A128GCM"
 
     @classmethod
     def get_key_length(cls) -> int:
@@ -1293,7 +1359,7 @@ class A192GCM(_AesGcm):
     """
 
     identifier = 2
-    fullname = 'A192GCM'
+    fullname = "A192GCM"
 
     @classmethod
     def get_key_length(cls) -> int:
@@ -1312,7 +1378,7 @@ class A256GCM(_AesGcm):
     """
 
     identifier = 3
-    fullname = 'A256GCM'
+    fullname = "A256GCM"
 
     @classmethod
     def get_key_length(cls) -> int:
@@ -1322,7 +1388,7 @@ class A256GCM(_AesGcm):
 @CoseAlgorithm.register_attribute()
 class HMAC25664(_HMAC):
     identifier = 4
-    fullname = 'HMAC_256_64'
+    fullname = "HMAC_256_64"
 
     @classmethod
     def get_digest_length(cls) -> int:
@@ -1336,7 +1402,7 @@ class HMAC25664(_HMAC):
 @CoseAlgorithm.register_attribute()
 class HMAC256(_HMAC):
     identifier = 5
-    fullname = 'HMAC_256'
+    fullname = "HMAC_256"
 
     @classmethod
     def get_digest_length(cls) -> int:
@@ -1350,7 +1416,7 @@ class HMAC256(_HMAC):
 @CoseAlgorithm.register_attribute()
 class HMAC384(_HMAC):
     identifier = 6
-    fullname = 'HMAC_384'
+    fullname = "HMAC_384"
 
     @classmethod
     def get_digest_length(cls) -> int:
@@ -1364,7 +1430,7 @@ class HMAC384(_HMAC):
 @CoseAlgorithm.register_attribute()
 class HMAC512(_HMAC):
     identifier = 7
-    fullname = 'HMAC_512'
+    fullname = "HMAC_512"
 
     @classmethod
     def get_digest_length(cls) -> int:
@@ -1378,7 +1444,7 @@ class HMAC512(_HMAC):
 @CoseAlgorithm.register_attribute()
 class AESCCM1664128(_AesCcm):
     identifier = 10
-    fullname = 'AES_CCM_16_64_128'
+    fullname = "AES_CCM_16_64_128"
 
     @classmethod
     def get_tag_length(cls) -> int:
@@ -1392,7 +1458,7 @@ class AESCCM1664128(_AesCcm):
 @CoseAlgorithm.register_attribute()
 class AESCCM1664256(_AesCcm):
     identifier = 11
-    fullname = 'AES_CCM_16_64_256'
+    fullname = "AES_CCM_16_64_256"
 
     @classmethod
     def get_tag_length(cls) -> int:
@@ -1406,7 +1472,7 @@ class AESCCM1664256(_AesCcm):
 @CoseAlgorithm.register_attribute()
 class AESCCM6464128(_AesCcm):
     identifier = 12
-    fullname = 'AES_CCM_64_64_128'
+    fullname = "AES_CCM_64_64_128"
 
     @classmethod
     def get_tag_length(cls) -> int:
@@ -1420,7 +1486,7 @@ class AESCCM6464128(_AesCcm):
 @CoseAlgorithm.register_attribute()
 class AESCCM6464256(_AesCcm):
     identifier = 13
-    fullname = 'AES_CCM_64_64_256'
+    fullname = "AES_CCM_64_64_256"
 
     @classmethod
     def get_key_length(cls) -> int:
@@ -1434,7 +1500,7 @@ class AESCCM6464256(_AesCcm):
 @CoseAlgorithm.register_attribute()
 class AESMAC12864(_AesMac):
     identifier = 14
-    fullname = 'AES_MAC_128_64'
+    fullname = "AES_MAC_128_64"
 
     @classmethod
     def get_digest_length(cls) -> int:
@@ -1448,7 +1514,7 @@ class AESMAC12864(_AesMac):
 @CoseAlgorithm.register_attribute()
 class AESMAC25664(_AesMac):
     identifier = 15
-    fullname = 'AES_MAC_256_64'
+    fullname = "AES_MAC_256_64"
 
     @classmethod
     def get_digest_length(cls) -> int:
@@ -1462,7 +1528,7 @@ class AESMAC25664(_AesMac):
 @CoseAlgorithm.register_attribute()
 class AESMAC128128(_AesMac):
     identifier = 25
-    fullname = 'AES_MAC_128_128'
+    fullname = "AES_MAC_128_128"
 
     @classmethod
     def get_digest_length(cls) -> int:
@@ -1476,7 +1542,7 @@ class AESMAC128128(_AesMac):
 @CoseAlgorithm.register_attribute()
 class AESMAC256128(_AesMac):
     identifier = 26
-    fullname = 'AES_MAC_256_128'
+    fullname = "AES_MAC_256_128"
 
     @classmethod
     def get_digest_length(cls) -> int:
@@ -1491,7 +1557,7 @@ class AESMAC256128(_AesMac):
 class AESCCM16128128(_AesCcm):
     identifier = 30
     tag_length = 16
-    fullname = 'AES_CCM_16_128_128'
+    fullname = "AES_CCM_16_128_128"
 
     @classmethod
     def get_tag_length(cls) -> int:
@@ -1505,7 +1571,7 @@ class AESCCM16128128(_AesCcm):
 @CoseAlgorithm.register_attribute()
 class AESCCM16128256(_AesCcm):
     identifier = 31
-    fullname = 'AES_CCM_16_128_256'
+    fullname = "AES_CCM_16_128_256"
 
     @classmethod
     def get_tag_length(cls) -> int:
@@ -1519,7 +1585,7 @@ class AESCCM16128256(_AesCcm):
 @CoseAlgorithm.register_attribute()
 class AESCCM64128128(_AesCcm):
     identifier = 32
-    fullname = 'AES_CCM_64_128_128'
+    fullname = "AES_CCM_64_128_128"
 
     @classmethod
     def get_tag_length(cls) -> int:
@@ -1533,7 +1599,7 @@ class AESCCM64128128(_AesCcm):
 @CoseAlgorithm.register_attribute()
 class AESCCM64128256(_AesCcm):
     identifier = 33
-    fullname = 'AES_CCM_64_128_256'
+    fullname = "AES_CCM_64_128_256"
 
     @classmethod
     def get_tag_length(cls) -> int:
@@ -1547,7 +1613,7 @@ class AESCCM64128256(_AesCcm):
 # set parser
 Algorithm.value_parser = CoseAlgorithm.from_id
 
-CoseAlg = TypeVar('CoseAlg', bound=CoseAlgorithm)
+CoseAlg = TypeVar("CoseAlg", bound=CoseAlgorithm)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print(CoseAlgorithm.get_registered_classes())

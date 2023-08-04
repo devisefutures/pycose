@@ -21,23 +21,24 @@ class Sign1Message(SignCommon):
     cbor_tag = 18
 
     @classmethod
-    def from_cose_obj(cls, cose_obj, allow_unknown_attributes: bool) -> 'Sign1Message':
+    def from_cose_obj(cls, cose_obj, allow_unknown_attributes: bool) -> "Sign1Message":
         msg = super().from_cose_obj(cose_obj, allow_unknown_attributes)
         msg._signature = cose_obj.pop(0)
         return msg
 
-    def __init__(self,
-                 phdr: Optional[dict] = None,
-                 uhdr: Optional[dict] = None,
-                 payload: Optional[bytes] = None,
-                 external_aad: bytes = b'',
-                 key: Optional[Union['EC2', 'OKP', 'RSA']] = None,
-                 *args,
-                 **kwargs):
-
+    def __init__(
+        self,
+        phdr: Optional[dict] = None,
+        uhdr: Optional[dict] = None,
+        payload: Optional[bytes] = None,
+        external_aad: bytes = b"",
+        key: Optional[Union["EC2", "OKP", "RSA"]] = None,
+        *args,
+        **kwargs,
+    ):
         super().__init__(phdr, uhdr, payload, external_aad, key, *args, **kwargs)
 
-        self._signature = b''
+        self._signature = b""
 
     @property
     def signature(self):
@@ -63,20 +64,55 @@ class Sign1Message(SignCommon):
 
         return cbor2.dumps(sig_structure)
 
-    def encode(self,key_label :str = None, user_pin :str = None, lib_path :str = None, slot_id :int =None, tag: bool = True, sign: bool = True, hsm: bool = False, detached_payload: Optional[bytes] = None, *args, **kwargs) -> CBOR:
-        """ Encodes the message into a CBOR array with or without a CBOR tag. """
-        print("\nHSM: ", hsm)
+    def encode(
+        self,
+        key_label: str = None,
+        user_pin: str = None,
+        lib_path: str = None,
+        slot_id: int = None,
+        tag: bool = True,
+        sign: bool = True,
+        hsm: bool = False,
+        detached_payload: Optional[bytes] = None,
+        *args,
+        **kwargs,
+    ) -> CBOR:
+        """Encodes the message into a CBOR array with or without a CBOR tag."""
+        # print("\nHSM: ", hsm)
         if hsm:
-            message = [self.phdr_encoded, self.uhdr_encoded, self.payload, self.compute_signature_hsm(detached_payload=detached_payload,key_label=key_label, user_pin=user_pin, lib_path=lib_path,slot_id=slot_id)]
+            message = [
+                self.phdr_encoded,
+                self.uhdr_encoded,
+                self.payload,
+                self.compute_signature_hsm(
+                    detached_payload=detached_payload,
+                    key_label=key_label,
+                    user_pin=user_pin,
+                    lib_path=lib_path,
+                    slot_id=slot_id,
+                ),
+            ]
         elif sign:
-            message = [self.phdr_encoded, self.uhdr_encoded, self.payload, self.compute_signature(detached_payload)]
+            message = [
+                self.phdr_encoded,
+                self.uhdr_encoded,
+                self.payload,
+                self.compute_signature(detached_payload),
+            ]
         elif self.signature:
-            message = [self.phdr_encoded, self.uhdr_encoded, self.payload, self.signature]
+            message = [
+                self.phdr_encoded,
+                self.uhdr_encoded,
+                self.payload,
+                self.signature,
+            ]
         else:
             message = [self.phdr_encoded, self.uhdr_encoded, self.payload]
 
         if tag:
-            res = cbor2.dumps(cbor2.CBORTag(self.cbor_tag, message), default=self._custom_cbor_encoder)
+            res = cbor2.dumps(
+                cbor2.CBORTag(self.cbor_tag, message), default=self._custom_cbor_encoder
+            )
         else:
             res = cbor2.dumps(message, default=self._custom_cbor_encoder)
 
@@ -85,5 +121,7 @@ class Sign1Message(SignCommon):
     def __repr__(self) -> str:
         phdr, uhdr = self._hdr_repr()
 
-        return f'<COSE_Sign1: [{phdr}, {uhdr}, {utils.truncate(self._payload)}, ' \
-               f'{utils.truncate(self._signature)}]>'
+        return (
+            f"<COSE_Sign1: [{phdr}, {uhdr}, {utils.truncate(self._payload)}, "
+            f"{utils.truncate(self._signature)}]>"
+        )
